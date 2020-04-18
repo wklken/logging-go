@@ -10,16 +10,17 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 
-	"apigateway/pkg/logging/hook"
+	"github.com/wklken/logging-go/formatter"
+	"github.com/wklken/logging-go/hook"
 )
 
 // reference: https://github.com/hellofresh/logging-go/blob/master/hooks.go
 
 var (
-	// ErrUnknownLogHookFormat is the error returned when trying to initialise hook of unknown format
+	// ErrUnknownLogHookFormat is the error returned when trying to initialize hook of unknown format
 	ErrUnknownLogHookFormat = errors.New("failed to init log hooks: unknown hook found")
 
-	// ErrMissingLogHookSetting is the error returned when trying to initialise hook with required settings missing
+	// ErrMissingLogHookSetting is the error returned when trying to initialize hook with required settings missing
 	// ErrMissingLogHookSetting = errors.New("Failed to init log hooks: missing required hook setting")
 	// ErrFailedToConfigureLogHook is the error returned when hook configuring failed for some reasons
 	// ErrFailedToConfigureLogHook = errors.New("Failed to init log hooks: failed to configure hook")
@@ -43,6 +44,8 @@ const (
 	Text LogFormat = "text"
 	// JSON is json log format
 	JSON LogFormat = "json"
+	// NULL is null log format
+	Null LogFormat = "null"
 
 	HookFile   = "file"
 	HookSentry = "sentry"
@@ -91,8 +94,12 @@ func (c LogConfig) NewLogger() (*log.Logger, error) {
 	}
 	logger.SetLevel(level)
 
-	logger.SetOutput(c.getWriter())
-	logger.SetFormatter(c.getFormatter())
+	// logger.SetOutput(c.getWriter())
+	logger.SetOutput(ioutil.Discard)
+	// TODO: move the setFormat another place, default without any format
+	// TODO: default NullFormatter
+	logger.SetFormatter(c.getDefaultFormatter())
+	// logger.SetFormatter(c.getFormatter())
 
 	hooks, err := c.initHooks()
 	if err != nil {
@@ -141,12 +148,19 @@ func (c LogConfig) getWriter() io.Writer {
 func (c LogConfig) getFormatter() log.Formatter {
 	switch c.Format {
 	case JSON:
-		return &log.JSONFormatter{}
+		// return &log.JSONFormatter{}
+		return &formatter.JSONFormatter{}
+	case Null:
+		return &formatter.NullFormatter{}
 	case Text:
 		fallthrough
 	default:
 		return &log.TextFormatter{}
 	}
+}
+
+func (c LogConfig) getDefaultFormatter() log.Formatter {
+	return &formatter.NullFormatter{}
 }
 
 type Errors []error
@@ -163,22 +177,20 @@ func (e Errors) Error() string {
 }
 
 func (c LogConfig) initHooks() ([]log.Hook, error) {
-
 	hooks := []log.Hook{}
 
 	errs := Errors{}
 	formatter := c.getFormatter()
 
 	for _, h := range c.Hooks {
-
-		var loghook hook.LogHook
+		var loghook hook.LogHookBuilder
 		switch h.Type {
 		case HookFile:
-			loghook = hook.FileLogHook{}
+			loghook = hook.FileLogHookBuilder{Formatter: formatter}
 		case HookSentry:
-			loghook = hook.SentryLogHook{}
+			loghook = hook.SentryLogHookBuilder{}
 		case HookRedis:
-			loghook = hook.RedisLogHook{}
+			loghook = hook.RedisLogHookBuilder{}
 		default:
 			loghook = nil
 		}
@@ -188,13 +200,12 @@ func (c LogConfig) initHooks() ([]log.Hook, error) {
 			return nil, ErrUnknownLogHookFormat
 		}
 
-		lh, err := loghook.New(h.Type, h.Settings, formatter)
+		lh, err := loghook.New(h.Type, h.Settings)
 		if err != nil {
 			errs = append(errs, errors.Wrapf(err, "init log hook %s fail", h.Type))
 		} else {
 			hooks = append(hooks, lh)
 		}
-
 	}
 
 	if len(errs) != 0 {

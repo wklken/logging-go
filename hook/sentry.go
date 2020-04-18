@@ -5,21 +5,36 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type SentryLogHook struct {
+type SentryLogHookBuilder struct {
 }
 
 // sentry: https://github.com/evalphobia/logrus_sentry
-func (s SentryLogHook) New(name string, settings map[string]string, formatter logrus.Formatter) (logrus.Hook, error) {
+func (b SentryLogHookBuilder) New(name string, settings map[string]string) (logrus.Hook, error) {
 	// 1. validate settings
 	if err := validateRequiredHookSettings(name, settings, []string{"dsn"}); err != nil {
 		return nil, err
 	}
 
-	return newSentryHook(settings["dsn"])
+	asyncEnable := AsyncEnable
+	asyncEnableStr, ok := settings["async_enable"]
+	if ok {
+		if asyncEnableStr == "true" || asyncEnableStr == "1" {
+			asyncEnable = true
+		} else {
+			asyncEnable = false
+		}
+	}
+
+	return newSentryHook(settings["dsn"], asyncEnable)
 }
 
-func newSentryHook(dsn string) (logrus.Hook, error) {
-	hook, err := logrus_sentry.NewSentryHook(dsn, []logrus.Level{
+func newSentryHook(dsn string, asyncEnable bool) (logrus.Hook, error) {
+	newSentryHookFunc := logrus_sentry.NewSentryHook
+	if asyncEnable {
+		newSentryHookFunc = logrus_sentry.NewAsyncSentryHook
+	}
+
+	hook, err := newSentryHookFunc(dsn, []logrus.Level{
 		logrus.PanicLevel,
 		logrus.FatalLevel,
 		logrus.ErrorLevel,

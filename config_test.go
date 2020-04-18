@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"io"
 	"io/ioutil"
 	"os"
 	"testing"
@@ -8,10 +9,11 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/wklken/logging-go/formatter"
 )
 
 func TestNewLogger(t *testing.T) {
-
 	// text logger
 	l := LogConfig{
 		Level:          "debug",
@@ -41,35 +43,38 @@ func TestNewLogger(t *testing.T) {
 	// apply as system default
 	err = l.ApplyAsStdLogger()
 	assert.NoError(t, err)
-
 }
 
 func TestLogConfigApplyGetWriter(t *testing.T) {
-	c := LogConfig{Writer: StdErr}
-	assert.Equal(t, c.getWriter(), os.Stderr)
-
-	c = LogConfig{Writer: StdOut}
-	assert.Equal(t, c.getWriter(), os.Stdout)
-
-	c = LogConfig{Writer: Discard}
-	assert.Equal(t, c.getWriter(), ioutil.Discard)
-
-	// fallback to stderr for unknown writer
-	c = LogConfig{Writer: LogWriter("unknown")}
-	assert.Equal(t, c.getWriter(), os.Stderr)
+	var data = []struct {
+		writer   LogWriter
+		expected io.Writer
+	}{
+		{StdErr, os.Stderr},
+		{StdOut, os.Stdout},
+		{Discard, ioutil.Discard},
+		{LogWriter("unknown"), os.Stderr},
+	}
+	for _, d := range data {
+		c := LogConfig{Writer: d.writer}
+		assert.Equal(t, d.expected, c.getWriter())
+	}
 }
 
 func TestLogConfigApplyGetFormatter(t *testing.T) {
-	c := LogConfig{Format: Text}
-	assert.IsType(t, &log.TextFormatter{}, c.getFormatter())
+	var data = []struct {
+		format   LogFormat
+		expected log.Formatter
+	}{
 
-	c = LogConfig{Format: JSON}
-	assert.IsType(t, &log.JSONFormatter{}, c.getFormatter())
-
-	// fallback to text for unknown format
-	c = LogConfig{Format: LogFormat("unknown")}
-	assert.IsType(t, &log.TextFormatter{}, c.getFormatter())
-
+		{Text, &log.TextFormatter{}},
+		{JSON, &formatter.JSONFormatter{}},
+		{LogFormat("unknown"), &log.TextFormatter{}},
+	}
+	for _, d := range data {
+		c := LogConfig{Format: d.format}
+		assert.IsType(t, d.expected, c.getFormatter())
+	}
 }
 
 func TestLogConfigApply(t *testing.T) {
@@ -109,7 +114,6 @@ func TestLogHooksUnmarshalText(t *testing.T) {
 }
 
 func TestInitHooks(t *testing.T) {
-
 	// init ErrUnknownLogHookFormat
 	l := LogConfig{
 		Level:          "debug",
@@ -152,16 +156,13 @@ func TestInitHooks(t *testing.T) {
 	hooks, err := l.initHooks()
 	assert.NoError(t, err)
 	assert.Len(t, hooks, 1)
-
 }
 
 func TestErrorArray(t *testing.T) {
-
 	errs := Errors{
 		errors.New("a"),
 		errors.New("b"),
 	}
 
 	assert.Equal(t, "a b", errs.Error())
-
 }

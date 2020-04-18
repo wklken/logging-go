@@ -18,33 +18,11 @@ import (
 // 1. https://github.com/rogierlommers/logrus-redis-hook/blob/master/logrus_redis.go
 // 2. https://github.com/lazyjin/logrus-redis-cluster-hook/blob/master/logrus_redis.go
 
-// HookConfig stores configuration needed to setup the hook
-type RedisHookConfig struct {
-	Host     string
-	Port     int
-	DB       int
-	Key      string
-	Password string
-	PoolSize int
-
-	App      string
-	Hostname string
-
-	LogFormat string
-}
-
-// RedisHook to sends logs to Redis server
-type RedisLogHook struct {
-	redisClient *redis.Client
-	redisKey    string
-	logFormat   string
-
-	app      string
-	hostname string
+type RedisLogHookBuilder struct {
 }
 
 // redis: https://github.com/TykTechnologies/tyk/blob/master/redis_logrus_hook.go
-func (r RedisLogHook) New(name string, settings map[string]string, formatter logrus.Formatter) (logrus.Hook, error) {
+func (b RedisLogHookBuilder) New(name string, settings map[string]string) (logrus.Hook, error) {
 	if err := validateRequiredHookSettings(name, settings, []string{"host", "port", "db", "key"}); err != nil {
 		return nil, err
 	}
@@ -88,12 +66,61 @@ func (r RedisLogHook) New(name string, settings map[string]string, formatter log
 		hookConfig.PoolSize = 3
 	}
 
+	// if asyncBufferSize, ok := settings["async_buffer_size"]; ok {
+	// 	size, cErr := strconv.Atoi(asyncBufferSize)
+	// 	if cErr != nil {
+	// 		return nil, errors.New("async_buffer_size should be integer")
+	// 	}
+	// 	hookConfig.asyncBufferSize = size
+	// }
+	// if AsyncEnable && hookConfig.asyncBufferSize == 0 {
+	// 	hookConfig.asyncBufferSize = DefaultAsyncBufferSize
+	// }
+	asyncEnable, asyncBufferSize, asyncBlock := getAsyncSettings(settings)
+	hookConfig.asyncEnable = asyncEnable
+	hookConfig.asyncBufferSize = asyncBufferSize
+	hookConfig.asyncBlock = asyncBlock
+
 	hook, err := newRedisHook(hookConfig)
 	if err != nil {
 		return nil, err
 	}
 
 	return hook, nil
+}
+
+// HookConfig stores configuration needed to setup the hook
+type RedisHookConfig struct {
+	Host     string
+	Port     int
+	DB       int
+	Key      string
+	Password string
+	PoolSize int
+
+	App      string
+	Hostname string
+
+	LogFormat string
+
+	asyncEnable     bool
+	asyncBufferSize int
+	asyncBlock      bool
+}
+
+// RedisHook to sends logs to Redis server
+type RedisLogHook struct {
+	redisClient *redis.Client
+	redisKey    string
+	logFormat   string
+
+	app      string
+	hostname string
+
+	fireChannel     chan *logrus.Entry
+	asyncEnable     bool
+	asyncBufferSize int
+	asyncBlock      bool
 }
 
 // NewHook creates a hook to be added to an instance of logger
@@ -104,19 +131,57 @@ func newRedisHook(config RedisHookConfig) (*RedisLogHook, error) {
 		return nil, err
 	}
 
-	return &RedisLogHook{
+	hook := &RedisLogHook{
 		redisClient: redisClient,
 		redisKey:    config.Key,
 
 		app:       config.App,
 		hostname:  config.Hostname,
 		logFormat: config.LogFormat,
-	}, nil
+	}
 
+	if config.asyncEnable {
+		hook.asyncEnable = config.asyncEnable
+		hook.asyncBufferSize = config.asyncBufferSize
+		hook.asyncBlock = config.asyncBlock
+
+		hook.makeAsync()
+	}
+
+	return hook, nil
+}
+
+func (r *RedisLogHook) makeAsync() {
+	r.fireChannel = make(chan *logrus.Entry, r.asyncBufferSize)
+	fmt.Printf("redis hook will use a async buffer with size %d\n", r.asyncBufferSize)
+	go func() {
+		for entry := range r.fireChannel {
+			if err := r.send(entry); err != nil {
+				fmt.Println("Error during sending message to redis:", err)
+			}
+		}
+	}()
 }
 
 // Fire is called when a log event is fired.
 func (r *RedisLogHook) Fire(entry *logrus.Entry) error {
+	if r.fireChannel != nil { // Async mode.
+		select {
+		case r.fireChannel <- entry:
+		default:
+			if r.asyncBlock {
+				r.fireChannel <- entry // Blocks the goroutine because buffer is full.
+				return nil
+			}
+			// Drop message by default.
+		}
+		return nil
+	}
+
+	return r.send(entry)
+}
+
+func (r *RedisLogHook) send(entry *logrus.Entry) error {
 	var msg interface{}
 
 	switch r.logFormat {
@@ -208,11 +273,12 @@ func newRedisClient(server, password string, port int, db int, poolSize int) (*r
 	addr := fmt.Sprintf("%s:%d", server, port)
 
 	c := redis.NewClient(&redis.Options{
-		Addr:        addr,
-		Password:    password,
-		DB:          db,
-		PoolSize:    poolSize,
-		IdleTimeout: 180 * time.Second,
+		Addr:         addr,
+		Password:     password,
+		DB:           db,
+		PoolSize:     poolSize,
+		MinIdleConns: 80,
+		IdleTimeout:  180 * time.Second,
 	})
 
 	_, err := c.Ping().Result()

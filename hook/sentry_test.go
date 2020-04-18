@@ -3,28 +3,28 @@ package hook
 import (
 	"testing"
 
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestNewSentryHook(t *testing.T) {
-
-	s := SentryLogHook{}
+	s := SentryLogHookBuilder{}
 
 	name := "test"
-	emptySettings := map[string]string{}
-	formatter := &logrus.JSONFormatter{}
 
-	_, err := s.New(name, emptySettings, formatter)
-	assert.Error(t, err)
-
-	// wrong dsn
-	settings := map[string]string{
-		"dsn": "xxxx",
+	var data = []struct {
+		settings  map[string]string
+		willError bool
+	}{
+		{map[string]string{}, true},
+		// wrong dsn
+		{map[string]string{"dsn": "xxxx"}, true},
 	}
-	_, err = s.New(name, settings, formatter)
-	assert.Error(t, err)
-	// t.Log(err)
-
-	// TODO: normal sentry
+	for _, d := range data {
+		_, err := s.New(name, d.settings)
+		if d.willError {
+			assert.Error(t, err)
+		} else {
+			assert.NoError(t, err)
+		}
+	}
 }

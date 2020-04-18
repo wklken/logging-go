@@ -9,33 +9,32 @@ import (
 )
 
 func TestNewRedisHook(t *testing.T) {
-
-	f := RedisLogHook{}
+	f := RedisLogHookBuilder{}
 
 	name := "test"
-	emptySettings := map[string]string{}
-	formatter := &logrus.JSONFormatter{}
 
-	_, err := f.New(name, emptySettings, formatter)
-	assert.Error(t, err)
+	var data = []struct {
+		settings  map[string]string
+		willError bool
+	}{
+		{map[string]string{}, true},
+		// normal
+		// TODO: will error, no redis available
+		{map[string]string{"host": "127.1.1.1", "port": "6379", "db": "0", "key": "test", "poolsize": "3"}, true},
 
-	// normal
-	settings := map[string]string{"host": "127.1.1.1", "port": "6379", "db": "0", "key": "test", "poolsize": "3"}
-	_, err = f.New(name, settings, formatter)
-	// assert.NoError(t, err)
-	// TODO: will error, no redis available
-	assert.Error(t, err)
-
-	// normal wrong port
-	settings = map[string]string{"host": "127.1.1.1", "port": "a", "db": "0", "key": "test"}
-	_, err = f.New(name, settings, formatter)
-	assert.Error(t, err)
-
-	// normal wrong db
-	settings = map[string]string{"host": "127.1.1.1", "port": "6379", "db": "a", "key": "test"}
-	_, err = f.New(name, settings, formatter)
-	assert.Error(t, err)
-
+		// normal wrong port
+		{map[string]string{"host": "127.1.1.1", "port": "a", "db": "0", "key": "test"}, true},
+		// normal wrong db
+		{map[string]string{"host": "127.1.1.1", "port": "6379", "db": "a", "key": "test"}, true},
+	}
+	for _, d := range data {
+		_, err := f.New(name, d.settings)
+		if d.willError {
+			assert.Error(t, err)
+		} else {
+			assert.NoError(t, err)
+		}
+	}
 }
 
 func TestRedisLogHookLevels(t *testing.T) {
@@ -64,7 +63,6 @@ func TestRedisLogHookFire(t *testing.T) {
 }
 
 func TestCreateMessage(t *testing.T) {
-
 	entry := &logrus.Entry{
 		Message: "hello",
 		Level:   logrus.DebugLevel,
@@ -85,5 +83,4 @@ func TestCreateMessage(t *testing.T) {
 	assert.Equal(t, "localhost", m3["host"])
 	assert.Equal(t, "app1", m3["application"])
 	assert.Equal(t, 1, m3["a"])
-
 }
